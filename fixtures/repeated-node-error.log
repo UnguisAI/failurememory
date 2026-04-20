@@ -1,0 +1,11 @@
+2026-04-19T20:31:22.123Z ##[group]Run npm test
+2026-04-19T20:31:23.456Z Workflow run 442188377 started for attempt 7
+2026-04-19T20:31:28.999Z npm ERR! code MODULE_NOT_FOUND
+2026-04-19T20:31:29.001Z npm ERR! path /home/runner/work/_temp/7f3b4a9c-11be-4c1f-aae2-328239017123/build-98127
+2026-04-19T20:31:29.050Z Error: Cannot find module '/home/runner/work/repo/repo/node_modules/@acme/widget/dist/index.js'
+2026-04-19T20:31:29.050Z Require stack:
+2026-04-19T20:31:29.050Z - /home/runner/work/_temp/7f3b4a9c-11be-4c1f-aae2-328239017123/script.js
+2026-04-19T20:31:29.051Z - /home/runner/work/repo/repo/scripts/test-runner.js
+2026-04-19T20:31:29.200Z npm ERR! command failed in 41.23s with id 98127
+2026-04-19T20:31:29.220Z npm ERR! A complete log of this run can be found in: /home/runner/.npm/_logs/2026-04-19T20_31_23_456Z-debug-0.log
+2026-04-19T20:31:29.500Z Commit 9f3ac19df4a2b6f1ec9988a0dce241eeab778901

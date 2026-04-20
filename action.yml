@@ -1,0 +1,38 @@
+name: 'FailureMemory'
+description: 'Deterministic local-first GitHub Action for recurring failure fingerprints'
+author: 'FailureMemory'
+
+branding:
+  icon: 'alert-triangle'
+  color: 'gray-dark'
+
+inputs:
+  log_path:
+    description: 'Path to a plain-text GitHub Actions log file to fingerprint'
+    required: true
+  history_file:
+    description: 'Path to the rolling JSON failure history file'
+    required: false
+    default: '.failurememory/history.json'
+  max_runs:
+    description: 'Maximum number of recent runs to retain per fingerprint'
+    required: false
+    default: '10'
+  summary_file:
+    description: 'Path to write the markdown summary for the current failure'
+    required: false
+    default: '.failurememory/failurememory-summary.md'
+
+outputs:
+  fingerprint:
+    description: 'Stable fingerprint for the normalized failure excerpt'
+  seen_count:
+    description: 'How many times this fingerprint has been seen in local history'
+  history_path:
+    description: 'Path to the updated failure history JSON file'
+  summary_path:
+    description: 'Path to the generated markdown summary file'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

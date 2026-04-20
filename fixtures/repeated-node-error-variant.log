@@ -1,0 +1,11 @@
+2026-04-20T01:14:02.777Z ##[group]Run npm test
+2026-04-20T01:14:03.111Z Workflow run 552900144 started for attempt 12
+2026-04-20T01:14:09.888Z npm ERR! code MODULE_NOT_FOUND
+2026-04-20T01:14:09.990Z npm ERR! path /private/var/folders/zz/tmp/failurememory-222222222/build-77881
+2026-04-20T01:14:10.010Z Error: Cannot find module '/Users/runner/work/repo/repo/node_modules/@acme/widget/dist/index.js'
+2026-04-20T01:14:10.010Z Require stack:
+2026-04-20T01:14:10.010Z - /private/var/folders/zz/tmp/failurememory-222222222/script.js
+2026-04-20T01:14:10.011Z - /Users/runner/work/repo/repo/scripts/test-runner.js
+2026-04-20T01:14:10.300Z npm ERR! command failed in 57.91s with id 77881
+2026-04-20T01:14:10.333Z npm ERR! A complete log of this run can be found in: /Users/runner/.npm/_logs/2026-04-20T01_14_03_111Z-debug-0.log
+2026-04-20T01:14:10.444Z Commit a84be92c99d5491f9ed051f0acdb5ef3c8ef6670

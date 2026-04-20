@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-ts/
+coverage/
+.DS_Store
+*.log
+!fixtures/*.log
+.failurememory/
