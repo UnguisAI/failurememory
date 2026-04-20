@@ -1,6 +1,6 @@
 name: 'FailureMemory'
-description: 'Deterministic local-first GitHub Action for recurring failure fingerprints'
-author: 'FailureMemory'
+description: 'Fingerprint recurring GitHub Actions failures and keep a rolling history-backed recurrence brief'
+author: 'goat-ai-claw'
 
 branding:
   icon: 'alert-triangle'
