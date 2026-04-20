@@ -348,6 +348,25 @@ describe('history persistence', () => {
   });
 });
 
+describe('public metadata and examples', () => {
+  const repoRoot = path.join(__dirname, '..');
+
+  it('keeps action runtime and example workflows aligned with the public recommendations', async () => {
+    const actionMetadata = await readFile(path.join(repoRoot, 'action.yml'), 'utf8');
+    const readme = await readFile(path.join(repoRoot, 'README.md'), 'utf8');
+    const workflowRunExample = await readFile(path.join(repoRoot, 'examples', 'workflow-run-triage.yml'), 'utf8');
+    const fileModeExample = await readFile(path.join(repoRoot, 'examples', 'file-mode.yml'), 'utf8');
+
+    expect(actionMetadata).toContain("using: 'node24'");
+    expect(readme).toContain("if: ${{ github.event.workflow_run.conclusion == 'failure' }}");
+    expect(readme).toContain('fetch_mode: github');
+    expect(readme).toContain('github_run_id: ${{ github.event.workflow_run.id }}');
+    expect(workflowRunExample).toContain("if: ${{ github.event.workflow_run.conclusion == 'failure' }}");
+    expect(workflowRunExample).toContain('fetch_mode: github');
+    expect(fileModeExample).toContain('actions/checkout@v6');
+  });
+});
+
 describe('summary rendering', () => {
   it('renders markdown with recurrence details for the current fingerprint', () => {
     const { buildSummary } = require('../src/summary');

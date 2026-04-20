@@ -7,7 +7,7 @@ jobs:
   fingerprint-exported-log:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Create a demo log file
         run: |
