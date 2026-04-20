@@ -55,6 +55,56 @@ describe('fingerprint normalization', () => {
   });
 });
 
+describe('GitHub Actions log parsing', () => {
+  const fixtureDir = path.join(__dirname, '..', 'fixtures');
+
+  it('prefers specific failure lines over generic GitHub Actions exit-code noise', async () => {
+    const { parseLog } = require('../src/log-parser');
+    const log = await readFile(path.join(fixtureDir, 'github-actions-artifact-403.log'), 'utf8');
+
+    const parsed = parseLog(log);
+
+    expect(parsed.selectedLines).toEqual(['gh: Resource not accessible by integration (HTTP 403)']);
+    expect(parsed.rawExcerpt).toBe('gh: Resource not accessible by integration (HTTP 403)');
+    expect(parsed.normalizedExcerpt).toBe('gh: Resource not accessible by integration (HTTP <id>)');
+  });
+
+  it('ignores command boilerplate that only mentions Exception and keeps specific compile failures', async () => {
+    const { parseLog } = require('../src/log-parser');
+    const log = await readFile(path.join(fixtureDir, 'github-actions-go-build-error.log'), 'utf8');
+
+    const parsed = parseLog(log);
+
+    expect(parsed.selectedLines).toEqual([
+      'pkg/cmd/skills/preview/preview.go:44:17: f.Executable undefined (type *cmdutil.Factory has no field or method Executable)',
+      'pkg/cmd/skills/search/search.go:71:17: f.Executable undefined (type *cmdutil.Factory has no field or method Executable)',
+      'build.go: building task `bin/gh` failed.',
+      'make: *** [Makefile:17: bin/gh] Error 1',
+    ]);
+    expect(parsed.rawExcerpt).not.toContain('[command]');
+    expect(parsed.rawExcerpt).not.toContain('$_.Exception');
+    expect(parsed.rawExcerpt).not.toContain('Process completed with exit code 2.');
+  });
+
+  it('falls back to the generic exit-code line when no richer failure signal exists', async () => {
+    const { parseLog } = require('../src/log-parser');
+    const log = await readFile(path.join(fixtureDir, 'github-actions-generic-exit-only.log'), 'utf8');
+
+    const parsed = parseLog(log);
+
+    expect(parsed.selectedLines).toEqual(['Process completed with exit code 1.']);
+    expect(parsed.rawExcerpt).toBe('Process completed with exit code 1.');
+  });
+
+  it('accepts a plain generic exit-code line when it is the only failure signal', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog('Process completed with exit code 1.\nPost job cleanup.');
+
+    expect(parsed.selectedLines).toEqual(['Process completed with exit code 1.']);
+    expect(parsed.rawExcerpt).toBe('Process completed with exit code 1.');
+  });
+});
+
 describe('history persistence', () => {
   it('merges repeated failures into rolling history while preserving first seen metadata', async () => {
     const { mkdtemp, readFile: readTempFile, rm } = require('node:fs/promises');

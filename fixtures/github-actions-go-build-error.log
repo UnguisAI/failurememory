@@ -1,0 +1,11 @@
+build (windows-latest)	UNKNOWN STEP	2026-04-17T09:46:10.6183903Z [command]"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "$ErrorActionPreference = 'Stop' ; try { Add-Type -AssemblyName System.IO.Compression.ZipFile } catch { } ; try { [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\a\_temp\go-1.26.2-win32-x64.zip', 'D:\a\_temp\ed32f703-fa46-46f3-a40d-51e202030ce3', $true) } catch { if (($_.Exception.GetType().FullName -eq 'System.Management.Automation.MethodException') -or ($_.Exception.GetType().FullName -eq 'System.Management.Automation.RuntimeException') ){ Expand-Archive -LiteralPath 'D:\a\_temp\go-1.26.2-win32-x64.zip' -DestinationPath 'D:\a\_temp\ed32f703-fa46-46f3-a40d-51e202030ce3' -Force } else { throw $_ } } ;"
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:09.6815449Z GOOS= GOARCH= GOARM= GOFLAGS= CGO_ENABLED= go build -o script/build script/build.go
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:09.9054236Z go build -trimpath -ldflags "-X github.com/cli/cli/v2/internal/build.Date=2026-04-17 -X github.com/cli/cli/v2/internal/build.Version=37574d0 " -o bin/gh ./cmd/gh
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:54.9922933Z # github.com/cli/cli/v2/pkg/cmd/skills/preview
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.0031093Z ##[error]pkg/cmd/skills/preview/preview.go:44:17: f.Executable undefined (type *cmdutil.Factory has no field or method Executable)
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.0873158Z # github.com/cli/cli/v2/pkg/cmd/skills/search
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.0883825Z ##[error]pkg/cmd/skills/search/search.go:71:17: f.Executable undefined (type *cmdutil.Factory has no field or method Executable)
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.8859973Z exit status 1
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.8861141Z ##[error]build.go: building task `bin/gh` failed.
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.8863379Z make: *** [Makefile:17: bin/gh] Error 1
+integration-tests (ubuntu-latest)	UNKNOWN STEP	2026-04-17T09:46:55.8886722Z ##[error]Process completed with exit code 2.

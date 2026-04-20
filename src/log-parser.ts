@@ -1,5 +1,11 @@
 import type { ParsedFailure } from './types';
 
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;]*m/g;
+const GITHUB_ACTIONS_LINE_PATTERN = /^[^\t]+\t[^\t]*\t(?:\uFEFF)?(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*)?(.*)$/;
+const LEADING_TIMESTAMP_PATTERN = /^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}[:_]\d{2}[:_]\d{2}(?:\.\d+)?Z\s*/;
+const GITHUB_ERROR_PREFIX_PATTERN = /^##\[error\]\s*/i;
+const GENERIC_EXIT_CODE_PATTERN = /^process completed with exit code\s+(?!0\b)\d+\.?$/i;
+
 const ERROR_LINE_PATTERNS = [
   /^error:/i,
   /assertionerror/i,
@@ -8,15 +14,56 @@ const ERROR_LINE_PATTERNS = [
   /npm err!/i,
   /require stack/i,
   /command(?:\s+\S+){0,3}\s+failed/i,
-  /process completed with exit code\s+(?!0\b)\d+/i,
-  /\bexception\b/i,
+  /\bHTTP\s+[45]\d{2}\b/i,
+  /^\w*exception(?::|\b)/i,
+  /\b(?:uncaught|unhandled)\s+exception\b/i,
   /^traceback/i,
   /caused by:/i,
   /\bfatal:/i,
+  /\bundefined\b.+\b(?:no field or method|not found)\b/i,
+  /\bbuilding task\b.*\bfailed\./i,
+  /^make:\s+\*\*\*/i,
 ];
 
-function isFailureLine(line: string): boolean {
-  return ERROR_LINE_PATTERNS.some(pattern => pattern.test(line));
+function stripAnsi(line: string): string {
+  return line.replace(ANSI_ESCAPE_PATTERN, '');
+}
+
+function stripGitHubActionsPrefix(line: string): string {
+  const trimmedLine = stripAnsi(line).replace(/^\uFEFF/, '').trim();
+  const match = trimmedLine.match(GITHUB_ACTIONS_LINE_PATTERN);
+  return (match?.[1] ?? trimmedLine).trim();
+}
+
+function stripGitHubErrorPrefix(line: string): string {
+  return line.replace(GITHUB_ERROR_PREFIX_PATTERN, '').trim();
+}
+
+function stripLeadingTimestamp(line: string): string {
+  return line.replace(LEADING_TIMESTAMP_PATTERN, '').trim();
+}
+
+function classifyLine(line: string): {
+  cleanedLine: string;
+  matchableLine: string;
+  isFailure: boolean;
+  isGenericExitCode: boolean;
+  includeFollowingStackLine: boolean;
+} {
+  const workflowLine = stripGitHubActionsPrefix(line);
+  const isGitHubError = GITHUB_ERROR_PREFIX_PATTERN.test(workflowLine);
+  const cleanedLine = stripGitHubErrorPrefix(workflowLine);
+  const matchableLine = stripLeadingTimestamp(cleanedLine);
+  const isGenericExitCode = GENERIC_EXIT_CODE_PATTERN.test(matchableLine);
+  const isFailure = isGitHubError || isGenericExitCode || ERROR_LINE_PATTERNS.some(pattern => pattern.test(matchableLine));
+
+  return {
+    cleanedLine,
+    matchableLine,
+    isFailure,
+    isGenericExitCode,
+    includeFollowingStackLine: /require stack/i.test(matchableLine),
+  };
 }
 
 function normalizeLine(line: string): string {
@@ -43,18 +90,26 @@ export function parseLog(logText: string): ParsedFailure {
     throw new Error('Log file is empty or contains only whitespace.');
   }
 
-  const selectedLines: string[] = [];
+  const selectedLines: Array<{ line: string; isGenericExitCode: boolean }> = [];
   let includeFollowingStackLine = false;
 
   for (const line of lines) {
-    if (isFailureLine(line)) {
-      selectedLines.push(line);
-      includeFollowingStackLine = /require stack/i.test(line);
+    const classification = classifyLine(line);
+
+    if (classification.isFailure) {
+      selectedLines.push({
+        line: classification.cleanedLine,
+        isGenericExitCode: classification.isGenericExitCode,
+      });
+      includeFollowingStackLine = classification.includeFollowingStackLine;
       continue;
     }
 
-    if (includeFollowingStackLine && /^-\s+/.test(line)) {
-      selectedLines.push(line);
+    if (includeFollowingStackLine && /^-\s+/.test(classification.matchableLine)) {
+      selectedLines.push({
+        line: classification.cleanedLine,
+        isGenericExitCode: false,
+      });
       continue;
     }
 
@@ -65,7 +120,10 @@ export function parseLog(logText: string): ParsedFailure {
     throw new Error('Could not find a recognizable failure excerpt in the provided log.');
   }
 
-  const excerptLines = selectedLines;
+  const hasSpecificFailureLine = selectedLines.some(selectedLine => !selectedLine.isGenericExitCode);
+  const excerptLines = selectedLines
+    .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
+    .map(selectedLine => selectedLine.line);
   const rawExcerpt = excerptLines.join('\n');
   const normalizedExcerpt = excerptLines.map(normalizeLine).join('\n');
 
