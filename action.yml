@@ -7,9 +7,22 @@ branding:
   color: 'gray-dark'
 
 inputs:
+  fetch_mode:
+    description: 'How to source logs: file for a workspace log file, github to fetch failed job logs via the GitHub API'
+    required: false
+    default: 'file'
   log_path:
-    description: 'Path to a plain-text GitHub Actions log file to fingerprint'
-    required: true
+    description: 'Path to a plain-text GitHub Actions log file to fingerprint when fetch_mode is file'
+    required: false
+  github_repository:
+    description: 'Repository to fetch logs from in owner/repo form when fetch_mode is github. Defaults to GITHUB_REPOSITORY.'
+    required: false
+  github_token:
+    description: 'Token used to call the GitHub API when fetch_mode is github. Falls back to GITHUB_TOKEN or GH_TOKEN and needs actions: read permission.'
+    required: false
+  github_run_id:
+    description: 'Optional workflow run id to inspect in GitHub mode. When omitted, FailureMemory paginates completed workflow runs and picks the newest failed run.'
+    required: false
   history_file:
     description: 'Path to the rolling JSON failure history file'
     required: false

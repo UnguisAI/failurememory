@@ -34,11 +34,17 @@ export interface MergeFailureOptions extends FailureRunReference {
   maxRuns: number;
 }
 
+export type FetchMode = 'file' | 'github';
+
 export interface ActionInputs {
+  fetchMode: FetchMode;
   logPath: string;
   historyFile: string;
   maxRuns: number;
   summaryFile: string;
+  githubRepository: string;
+  githubToken: string;
+  githubRunId: string;
 }
 
 export interface ActionResult {
@@ -57,4 +63,5 @@ export interface ActionRuntime {
   stepSummaryPath?: string;
   now(): Date;
   log(message: string): void;
+  env?: NodeJS.ProcessEnv;
 }
