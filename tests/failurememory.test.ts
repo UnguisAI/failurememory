@@ -66,7 +66,7 @@ describe('GitHub Actions log parsing', () => {
 
     expect(parsed.selectedLines).toEqual(['gh: Resource not accessible by integration (HTTP 403)']);
     expect(parsed.rawExcerpt).toBe('gh: Resource not accessible by integration (HTTP 403)');
-    expect(parsed.normalizedExcerpt).toBe('gh: Resource not accessible by integration (HTTP <id>)');
+    expect(parsed.normalizedExcerpt).toBe('gh: Resource not accessible by integration (HTTP 403)');
   });
 
   it('ignores command boilerplate that only mentions Exception and keeps specific compile failures', async () => {
@@ -84,6 +84,112 @@ describe('GitHub Actions log parsing', () => {
     expect(parsed.rawExcerpt).not.toContain('[command]');
     expect(parsed.rawExcerpt).not.toContain('$_.Exception');
     expect(parsed.rawExcerpt).not.toContain('Process completed with exit code 2.');
+  });
+
+  it('compresses duplicate multi-job failure excerpts while preserving unique lines in order', async () => {
+    const { parseLog } = require('../src/log-parser');
+    const log = await readFile(path.join(fixtureDir, 'github-actions-duplicate-multi-job.log'), 'utf8');
+
+    const parsed = parseLog(log);
+
+    expect(parsed.selectedLines).toEqual([
+      "Error: Cannot find module '/home/runner/work/failurememory/node_modules/.pnpm/left-pad@1.3.0_18553/node_modules/left-pad/index.js'",
+      'Require stack:',
+      '- /home/runner/work/failurememory/scripts/run-tests.js',
+      'npm ERR! code ELIFECYCLE',
+      'npm ERR! path D:\\a\\failurememory\\failurememory\\apps\\web',
+    ]);
+    expect(parsed.rawExcerpt).not.toContain("Error: Cannot find module 'D:\\a\\failurememory\\failurememory\\node_modules\\.pnpm\\left-pad@1.3.0_99281\\node_modules\\left-pad\\index.js'");
+    expect(parsed.normalizedExcerpt).toBe([
+      "Error: Cannot find module '<path>'",
+      'Require stack:',
+      '- <path>',
+      'npm ERR! code ELIFECYCLE',
+      'npm ERR! path <path>',
+    ].join('\n'));
+  });
+
+  it('keeps distinct failure lines even when they normalize to the same shape', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.1000000Z ##[error]gh: Resource not accessible by integration (HTTP 403)',
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.2000000Z ##[error]gh: Resource not accessible by integration (HTTP 404)',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'gh: Resource not accessible by integration (HTTP 403)',
+      'gh: Resource not accessible by integration (HTTP 404)',
+    ]);
+    expect(parsed.rawExcerpt).toContain('HTTP 403');
+    expect(parsed.rawExcerpt).toContain('HTTP 404');
+    expect(parsed.normalizedExcerpt).toBe([
+      'gh: Resource not accessible by integration (HTTP 403)',
+      'gh: Resource not accessible by integration (HTTP 404)',
+    ].join('\n'));
+  });
+
+  it('compresses duplicate failures that only differ by volatile numeric ids', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.1000000Z ##[error]Upload failed for artifact 12345 (HTTP 500)',
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.2000000Z ##[error]Upload failed for artifact 67890 (HTTP 500)',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'Upload failed for artifact 12345 (HTTP 500)',
+    ]);
+    expect(parsed.normalizedExcerpt).toBe('Upload failed for artifact <id> (HTTP 500)');
+  });
+
+  it('keeps distinct failure lines when port numbers are meaningful', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.1000000Z ##[error]error: failed to connect to localhost on port 5432',
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.2000000Z ##[error]error: failed to connect to localhost on port 6432',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'error: failed to connect to localhost on port 5432',
+      'error: failed to connect to localhost on port 6432',
+    ]);
+    expect(parsed.normalizedExcerpt).toBe([
+      'error: failed to connect to localhost on port 5432',
+      'error: failed to connect to localhost on port 6432',
+    ].join('\n'));
+  });
+
+  it('keeps meaningful status codes when labels use punctuation', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.1000000Z ##[error]error: request failed with HTTP: 403',
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.2000000Z ##[error]error: request failed with HTTP: 404',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'error: request failed with HTTP: 403',
+      'error: request failed with HTTP: 404',
+    ]);
+    expect(parsed.normalizedExcerpt).toBe([
+      'error: request failed with HTTP: 403',
+      'error: request failed with HTTP: 404',
+    ].join('\n'));
+  });
+
+  it('keeps meaningful SQLSTATE codes distinct', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.1000000Z ##[error]error: database rejected row (SQLSTATE 23505)',
+      'api\tUNKNOWN STEP\t2026-04-19T20:11:01.2000000Z ##[error]error: database rejected row (SQLSTATE 23503)',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'error: database rejected row (SQLSTATE 23505)',
+      'error: database rejected row (SQLSTATE 23503)',
+    ]);
+    expect(parsed.normalizedExcerpt).toBe([
+      'error: database rejected row (SQLSTATE 23505)',
+      'error: database rejected row (SQLSTATE 23503)',
+    ].join('\n'));
   });
 
   it('falls back to the generic exit-code line when no richer failure signal exists', async () => {

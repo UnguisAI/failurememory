@@ -66,7 +66,7 @@ function classifyLine(line: string): {
   };
 }
 
-function normalizeLine(line: string): string {
+function normalizePathLikeContent(line: string): string {
   return line
     .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}[:_]\d{2}[:_]\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
     .replace(/\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?\b/g, '<timestamp>')
@@ -75,9 +75,39 @@ function normalizeLine(line: string): string {
     .replace(/\b\d+(?:\.\d+)?(?:ms|s|m|h)\b/gi, '<duration>')
     .replace(/(['"])(?:[A-Za-z]:\\[^'"]+|\/[^'"\n]+)\1/g, "$1<path>$1")
     .replace(/(^|\s)(?:[A-Za-z]:\\\S+|\/\S+)/g, '$1<path>')
-    .replace(/\b\d{3,}\b/g, '<id>')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeVolatileNumericIds(line: string): string {
+  return line.replace(/\b\d{3,}\b/g, (match, offset, source) => {
+    const before = source.slice(0, offset).toLowerCase();
+    const after = source.slice(offset + match.length);
+    const previousChar = source[offset - 1] ?? '';
+    const nextChar = after[0] ?? '';
+
+    if (/\b(?:http|port|sqlstate)\W*$/.test(before)) {
+      return match;
+    }
+
+    if (previousChar === ':' || nextChar === ':') {
+      return match;
+    }
+
+    if (/\b(artifact|run|job|build|attempt|workflow|check|id)\s*#?\s*$/.test(before)) {
+      return '<id>';
+    }
+
+    return '<id>';
+  });
+}
+
+function normalizeLine(line: string): string {
+  return normalizeVolatileNumericIds(normalizePathLikeContent(line));
+}
+
+function buildDeduplicationKey(line: string): string {
+  return normalizeVolatileNumericIds(normalizePathLikeContent(line));
 }
 
 export function parseLog(logText: string): ParsedFailure {
@@ -124,12 +154,29 @@ export function parseLog(logText: string): ParsedFailure {
   const excerptLines = selectedLines
     .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
     .map(selectedLine => selectedLine.line);
-  const rawExcerpt = excerptLines.join('\n');
-  const normalizedExcerpt = excerptLines.map(normalizeLine).join('\n');
+  const dedupedExcerptLines: string[] = [];
+  const dedupedNormalizedLines: string[] = [];
+  const seenNormalizedSignals = new Set<string>();
+
+  for (const excerptLine of excerptLines) {
+    const deduplicationKey = buildDeduplicationKey(excerptLine);
+    const normalizedLine = normalizeLine(excerptLine);
+
+    if (seenNormalizedSignals.has(deduplicationKey)) {
+      continue;
+    }
+
+    seenNormalizedSignals.add(deduplicationKey);
+    dedupedExcerptLines.push(excerptLine);
+    dedupedNormalizedLines.push(normalizedLine);
+  }
+
+  const rawExcerpt = dedupedExcerptLines.join('\n');
+  const normalizedExcerpt = dedupedNormalizedLines.join('\n');
 
   return {
     rawExcerpt,
     normalizedExcerpt,
-    selectedLines: excerptLines,
+    selectedLines: dedupedExcerptLines,
   };
 }
