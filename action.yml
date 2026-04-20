@@ -1,6 +1,6 @@
 name: 'FailureMemory'
 description: 'Fingerprint recurring GitHub Actions failures and keep a rolling history-backed recurrence brief'
-author: 'goat-ai-claw'
+author: 'UnguisAI'
 
 branding:
   icon: 'alert-triangle'

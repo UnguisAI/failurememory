@@ -2,7 +2,7 @@
   "name": "failurememory",
   "version": "0.1.0",
   "description": "GitHub Action that fingerprints recurring CI failures and keeps a rolling history-backed recurrence brief",
-  "author": "goat-ai-claw",
+  "author": "UnguisAI",
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",

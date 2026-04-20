@@ -20,7 +20,7 @@ jobs:
 
       - name: Fingerprint exported log file
         id: failurememory
-        uses: goat-ai-claw/failurememory@v0
+        uses: UnguisAI/failurememory@v0
         with:
           fetch_mode: file
           log_path: logs/latest-failure.log

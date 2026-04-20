@@ -68,7 +68,7 @@ jobs:
 
       - name: Fingerprint the failing run
         id: failurememory
-        uses: goat-ai-claw/failurememory@v0
+        uses: UnguisAI/failurememory@v0
         with:
           fetch_mode: github
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +101,7 @@ If you already export a plain-text failure log inside a workflow, you can finger
 ```yaml
 - name: Fingerprint one exported log file
   id: failurememory
-  uses: goat-ai-claw/failurememory@v0
+  uses: UnguisAI/failurememory@v0
   with:
     fetch_mode: file
     log_path: logs/latest-failure.log

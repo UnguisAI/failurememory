@@ -23,7 +23,7 @@ jobs:
 
       - name: Fingerprint the failing run
         id: failurememory
-        uses: goat-ai-claw/failurememory@v0
+        uses: UnguisAI/failurememory@v0
         with:
           fetch_mode: github
           github_token: ${{ secrets.GITHUB_TOKEN }}
