@@ -31,7 +31,7 @@ interface GitHubJobsResponse {
 
 interface FetchedGitHubJobLog {
   job: GitHubJob;
-  logText: string;
+  failureSignalText: string;
   sortKey: string;
 }
 
@@ -189,13 +189,33 @@ function parseIsoTimestamp(value?: string | null): number {
   return Date.parse(value);
 }
 
-function buildFetchedJobSortKey(job: GitHubJob, logText: string): string {
+function isIgnorableGitHubJobParseError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message === 'Could not find a recognizable failure excerpt in the provided log.'
+    || error.message === 'Log file is empty or contains only whitespace.';
+}
+
+function buildFetchedGitHubJobLog(job: GitHubJob, logText: string): Omit<FetchedGitHubJobLog, 'job'> {
   const normalizedJobName = normalizeOptionalValue(job.name).toLowerCase();
 
   try {
-    return [normalizedJobName, parseLog(logText).normalizedExcerpt].join('\n');
-  } catch {
-    return [normalizedJobName, logText.trim()].join('\n');
+    const parsedFailure = parseLog(logText);
+    return {
+      failureSignalText: parsedFailure.rawExcerpt,
+      sortKey: [normalizedJobName, parsedFailure.normalizedExcerpt].join('\n'),
+    };
+  } catch (error) {
+    if (!isIgnorableGitHubJobParseError(error)) {
+      throw error;
+    }
+
+    return {
+      failureSignalText: '',
+      sortKey: [normalizedJobName, logText.trim()].join('\n'),
+    };
   }
 }
 
@@ -235,13 +255,6 @@ function selectNewestFailedRun(runs: GitHubWorkflowRun[]): GitHubWorkflowRun | u
 
     return right.id - left.id;
   })[0];
-}
-
-function formatGitHubJobHeader(repository: string, runId: string, job: GitHubJob): string {
-  const jobName = normalizeOptionalValue(job.name);
-  return jobName === ''
-    ? `===== ${repository} run ${runId} job ${job.id} =====`
-    : `===== ${repository} run ${runId} job ${job.id} (${jobName}) =====`;
 }
 
 async function fetchFailedJobs(repository: string, runId: string, token: string): Promise<GitHubJob[]> {
@@ -323,22 +336,25 @@ async function resolveGitHubLogSource(inputs: ActionInputs, runtime: ActionRunti
       `job logs for ${job.id} in ${repository}`,
       token
     );
+    const fetchedJobLog = buildFetchedGitHubJobLog(job, logText);
 
     fetchedJobLogs.push({
       job,
-      logText,
-      sortKey: buildFetchedJobSortKey(job, logText),
+      ...fetchedJobLog,
     });
   }
 
   const orderedJobLogs = sortFetchedGitHubJobLogs(fetchedJobLogs);
-  const sections = orderedJobLogs.map(({ job, logText }) => [
-    formatGitHubJobHeader(repository, runId, job),
-    logText.trimEnd(),
-  ].join('\n'));
+  const combinedFailureSignals = orderedJobLogs
+    .map(({ failureSignalText }) => failureSignalText)
+    .filter(Boolean);
+
+  if (combinedFailureSignals.length === 0) {
+    throw new Error('Could not find a recognizable failure excerpt in the provided log.');
+  }
 
   return {
-    logText: sections.join('\n\n'),
+    logText: combinedFailureSignals.join('\n'),
     logReference: `github://${repository}/actions/runs/${runId}#jobs=${orderedJobLogs.map(({ job }) => job.id).join(',')}`,
     runId,
   };

@@ -656,6 +656,229 @@ describe('runAction integration', () => {
     }
   });
 
+  it('uses compact per-job failure signals in GitHub mode instead of reparsing concatenated raw job logs', async () => {
+    const { mkdtemp, mkdir, readFile: readTempFile, realpath: resolveRealpath, rm, writeFile } = require('node:fs/promises');
+    const os = require('node:os');
+    const { createFingerprint } = require('../src/fingerprint');
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'failurememory-github-compact-signals-'));
+    const historyPath = path.join(tempDir, 'state', 'history.json');
+    const summaryPath = path.join(tempDir, 'output', 'summary.md');
+    const syntheticSource = 'github://octo-org/octo-repo/actions/runs/300#jobs=21,22';
+    const combinedFailureSignal = ['error: alpha failure', 'error: beta failure'].join('\n');
+    const fingerprint = createFingerprint(combinedFailureSignal);
+    const parseLogMock = jest.fn((logText: string) => {
+      if (logText.includes('FILLER_21') && logText.includes('FILLER_22')) {
+        throw new RangeError('Invalid string length');
+      }
+
+      if (logText.includes('FILLER_21')) {
+        return {
+          rawExcerpt: 'error: alpha failure',
+          normalizedExcerpt: 'error: alpha failure',
+          selectedLines: ['error: alpha failure'],
+        };
+      }
+
+      if (logText.includes('FILLER_22')) {
+        return {
+          rawExcerpt: 'error: beta failure',
+          normalizedExcerpt: 'error: beta failure',
+          selectedLines: ['error: beta failure'],
+        };
+      }
+
+      if (logText === combinedFailureSignal) {
+        return {
+          rawExcerpt: combinedFailureSignal,
+          normalizedExcerpt: combinedFailureSignal,
+          selectedLines: ['error: alpha failure', 'error: beta failure'],
+        };
+      }
+
+      throw new Error(`Unexpected parseLog input: ${logText.slice(0, 120)}`);
+    });
+
+    jest.resetModules();
+    jest.doMock('../src/log-parser', () => ({ parseLog: parseLogMock }));
+
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          jobs: [
+            {
+              id: 22,
+              name: 'test',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:05:00Z',
+            },
+            {
+              id: 21,
+              name: 'build',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:00:00Z',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(textResponse(`begin\nFILLER_22\n${'x'.repeat(5000)}\nerror: beta failure\nend\n`))
+      .mockResolvedValueOnce(textResponse(`begin\nFILLER_21\n${'y'.repeat(5000)}\nerror: alpha failure\nend\n`));
+    global.fetch = fetchMock as typeof fetch;
+
+    try {
+      const { runAction } = require('../src/index');
+      await mkdir(path.dirname(historyPath), { recursive: true });
+      await writeFile(
+        historyPath,
+        `${JSON.stringify({
+          version: 1,
+          maxRuns: 5,
+          updatedAt: '2026-04-19T20:00:00.000Z',
+          failures: {},
+        }, null, 2)}\n`
+      );
+
+      const { outputs, runtime } = createActionRuntime(tempDir, {
+        fetch_mode: 'github',
+        github_repository: 'octo-org/octo-repo',
+        github_token: 'input-token',
+        github_run_id: '300',
+        history_file: 'state/history.json',
+        max_runs: '5',
+        summary_file: 'output/summary.md',
+      });
+
+      const result = await runAction(runtime);
+      const savedHistory = JSON.parse(await readTempFile(historyPath, 'utf8'));
+      const summaryMarkdown = await readTempFile(summaryPath, 'utf8');
+      const resolvedHistoryPath = await resolveRealpath(historyPath);
+      const resolvedSummaryPath = await resolveRealpath(summaryPath);
+
+      expect(result).toEqual({
+        fingerprint,
+        seenCount: 1,
+        historyPath: resolvedHistoryPath,
+        summaryPath: resolvedSummaryPath,
+      });
+      expect(outputs).toEqual({
+        fingerprint,
+        seen_count: '1',
+        history_path: resolvedHistoryPath,
+        summary_path: resolvedSummaryPath,
+      });
+      expect(parseLogMock.mock.calls.map(([logText]) => logText)).toEqual([
+        expect.stringContaining('FILLER_22'),
+        expect.stringContaining('FILLER_21'),
+        combinedFailureSignal,
+      ]);
+      expect(savedHistory.failures[fingerprint]).toEqual({
+        fingerprint,
+        normalizedExcerpt: combinedFailureSignal,
+        firstSeenAt: '2026-04-19T21:00:00.000Z',
+        lastSeenAt: '2026-04-19T21:00:00.000Z',
+        seenCount: 1,
+        recentRuns: [
+          {
+            runId: '300',
+            timestamp: '2026-04-19T21:00:00.000Z',
+            logPath: syntheticSource,
+          },
+        ],
+      });
+      expect(summaryMarkdown).toContain(syntheticSource);
+    } finally {
+      jest.dontMock('../src/log-parser');
+      jest.resetModules();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rethrows unexpected per-job parser failures in GitHub mode instead of silently dropping them', async () => {
+    const { mkdtemp, mkdir, rm, writeFile } = require('node:fs/promises');
+    const os = require('node:os');
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'failurememory-github-parser-errors-'));
+    const historyPath = path.join(tempDir, 'state', 'history.json');
+    const parseLogMock = jest.fn((logText: string) => {
+      if (logText.includes('BROKEN_JOB')) {
+        throw new RangeError('parser blew up');
+      }
+
+      if (logText.includes('GOOD_JOB')) {
+        return {
+          rawExcerpt: 'error: stable failure',
+          normalizedExcerpt: 'error: stable failure',
+          selectedLines: ['error: stable failure'],
+        };
+      }
+
+      if (logText === 'error: stable failure') {
+        return {
+          rawExcerpt: 'error: stable failure',
+          normalizedExcerpt: 'error: stable failure',
+          selectedLines: ['error: stable failure'],
+        };
+      }
+
+      throw new Error(`Unexpected parseLog input: ${logText.slice(0, 120)}`);
+    });
+
+    jest.resetModules();
+    jest.doMock('../src/log-parser', () => ({ parseLog: parseLogMock }));
+
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          jobs: [
+            {
+              id: 22,
+              name: 'test',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:05:00Z',
+            },
+            {
+              id: 21,
+              name: 'build',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:00:00Z',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(textResponse('begin\nGOOD_JOB\nerror: stable failure\nend\n'))
+      .mockResolvedValueOnce(textResponse('begin\nBROKEN_JOB\nerror: broken failure\nend\n'));
+    global.fetch = fetchMock as typeof fetch;
+
+    try {
+      const { runAction } = require('../src/index');
+      await mkdir(path.dirname(historyPath), { recursive: true });
+      await writeFile(
+        historyPath,
+        `${JSON.stringify({
+          version: 1,
+          maxRuns: 5,
+          updatedAt: '2026-04-19T20:00:00.000Z',
+          failures: {},
+        }, null, 2)}\n`
+      );
+
+      const { failures, runtime } = createActionRuntime(tempDir, {
+        fetch_mode: 'github',
+        github_repository: 'octo-org/octo-repo',
+        github_token: 'input-token',
+        github_run_id: '300',
+        history_file: 'state/history.json',
+        max_runs: '5',
+        summary_file: 'output/summary.md',
+      });
+
+      await expect(runAction(runtime)).rejects.toThrow('parser blew up');
+      expect(failures).toContainEqual(expect.stringContaining('parser blew up'));
+    } finally {
+      jest.dontMock('../src/log-parser');
+      jest.resetModules();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses an explicit github_run_id without listing workflow runs first', async () => {
     const { mkdtemp, rm } = require('node:fs/promises');
     const os = require('node:os');
