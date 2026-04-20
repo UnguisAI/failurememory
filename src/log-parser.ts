@@ -1,10 +1,11 @@
 import type { ParsedFailure } from './types';
 
-const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;]*m/g;
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ACTIONS_LINE_PATTERN = /^[^\t]+\t[^\t]*\t(?:\uFEFF)?(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*)?(.*)$/;
 const LEADING_TIMESTAMP_PATTERN = /^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}[:_]\d{2}[:_]\d{2}(?:\.\d+)?Z\s*/;
 const GITHUB_ERROR_PREFIX_PATTERN = /^##\[error\]\s*/i;
 const GENERIC_EXIT_CODE_PATTERN = /^process completed with exit code\s+(?!0\b)\d+\.?$/i;
+const GENERIC_COMMAND_WRAPPER_PATTERN = /^(?:error:\s+|error\s+|elifecycle\s+)?command failed(?:\s+with exit code\s+(?!0\b)\d+\.?|:)/i;
 
 const ERROR_LINE_PATTERNS = [
   /^error:/i,
@@ -43,6 +44,23 @@ function stripLeadingTimestamp(line: string): string {
   return line.replace(LEADING_TIMESTAMP_PATTERN, '').trim();
 }
 
+function hasGitHubErrorPrefix(line: string): boolean {
+  return GITHUB_ERROR_PREFIX_PATTERN.test(line) || GITHUB_ERROR_PREFIX_PATTERN.test(stripLeadingTimestamp(line));
+}
+
+function stripSignalNoise(line: string): string {
+  let cleaned = stripGitHubActionsPrefix(line);
+
+  while (true) {
+    const next = stripGitHubErrorPrefix(stripLeadingTimestamp(cleaned));
+    if (next === cleaned) {
+      return next;
+    }
+
+    cleaned = next;
+  }
+}
+
 function classifyLine(line: string): {
   cleanedLine: string;
   matchableLine: string;
@@ -51,10 +69,11 @@ function classifyLine(line: string): {
   includeFollowingStackLine: boolean;
 } {
   const workflowLine = stripGitHubActionsPrefix(line);
-  const isGitHubError = GITHUB_ERROR_PREFIX_PATTERN.test(workflowLine);
-  const cleanedLine = stripGitHubErrorPrefix(workflowLine);
-  const matchableLine = stripLeadingTimestamp(cleanedLine);
-  const isGenericExitCode = GENERIC_EXIT_CODE_PATTERN.test(matchableLine);
+  const cleanedLine = stripSignalNoise(line);
+  const matchableLine = cleanedLine;
+  const isGitHubError = hasGitHubErrorPrefix(workflowLine);
+  const isGenericCommandWrapper = GENERIC_COMMAND_WRAPPER_PATTERN.test(matchableLine);
+  const isGenericExitCode = GENERIC_EXIT_CODE_PATTERN.test(matchableLine) || isGenericCommandWrapper;
   const isFailure = isGitHubError || isGenericExitCode || ERROR_LINE_PATTERNS.some(pattern => pattern.test(matchableLine));
 
   return {
@@ -103,11 +122,11 @@ function normalizeVolatileNumericIds(line: string): string {
 }
 
 function normalizeLine(line: string): string {
-  return normalizeVolatileNumericIds(normalizePathLikeContent(line));
+  return normalizeVolatileNumericIds(normalizePathLikeContent(stripSignalNoise(line)));
 }
 
 function buildDeduplicationKey(line: string): string {
-  return normalizeVolatileNumericIds(normalizePathLikeContent(line));
+  return normalizeVolatileNumericIds(normalizePathLikeContent(stripSignalNoise(line)));
 }
 
 export function parseLog(logText: string): ParsedFailure {

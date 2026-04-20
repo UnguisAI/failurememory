@@ -22,7 +22,6 @@ describe('fingerprint normalization', () => {
     const firstFingerprint = createFingerprint(firstParsed.normalizedExcerpt);
     const secondFingerprint = createFingerprint(secondParsed.normalizedExcerpt);
 
-    expect(firstParsed.normalizedExcerpt).toContain('<timestamp>');
     expect(firstParsed.normalizedExcerpt).toContain('<duration>');
     expect(firstParsed.normalizedExcerpt).toContain('<id>');
     expect(firstParsed.normalizedExcerpt).toContain('<path>');
@@ -107,6 +106,62 @@ describe('GitHub Actions log parsing', () => {
       'npm ERR! code ELIFECYCLE',
       'npm ERR! path <path>',
     ].join('\n'));
+  });
+
+  it('collapses timestamped plain and ##[error] duplicates into one clean assertion line', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      '2026-04-20T05:11:01.1000000Z AssertionError: expected undefined to be defined',
+      '2026-04-20T05:11:01.2000000Z ##[error]AssertionError: expected undefined to be defined',
+      'AssertionError: expected undefined to be defined',
+      '2026-04-20T05:11:01.3000000Z Error: apiRequestContext.get: socket hang up',
+      'Error: apiRequestContext.get: socket hang up',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual([
+      'AssertionError: expected undefined to be defined',
+      'Error: apiRequestContext.get: socket hang up',
+    ]);
+    expect(parsed.rawExcerpt).not.toContain('##[error]');
+    expect(parsed.rawExcerpt).not.toContain('2026-04-20T05:11:01.1000000Z');
+    expect(parsed.normalizedExcerpt).toBe([
+      'AssertionError: expected undefined to be defined',
+      'Error: apiRequestContext.get: socket hang up',
+    ].join('\n'));
+  });
+
+  it('drops generic command wrapper lines when richer failure signals exist', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      '2026-04-20T05:11:01.1000000Z AssertionError: expected undefined to be defined',
+      '2026-04-20T05:11:01.2000000Z ##[error]AssertionError: expected undefined to be defined',
+      '2026-04-20T05:11:01.3000000Z error Command failed with exit code 1.',
+      '2026-04-20T05:11:01.4000000Z ELIFECYCLE Command failed with exit code 1.',
+      '2026-04-20T05:11:01.5000000Z Error: Command failed: yarn test:ci --runInBand',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual(['AssertionError: expected undefined to be defined']);
+    expect(parsed.rawExcerpt).not.toContain('Command failed');
+  });
+
+  it('keeps generic command wrapper lines when they are the only failure signal', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog('2026-04-20T05:11:01.1000000Z error Command failed with exit code 1.');
+
+    expect(parsed.selectedLines).toEqual(['error Command failed with exit code 1.']);
+    expect(parsed.rawExcerpt).toBe('error Command failed with exit code 1.');
+  });
+
+  it('strips ANSI cursor-control noise before generic command wrapper detection', () => {
+    const { parseLog } = require('../src/log-parser');
+    const parsed = parseLog([
+      '2026-04-20T05:11:01.1000000Z AssertionError: expected undefined to be defined',
+      '\u001b[2K\u001b[1Gerror Command failed with exit code 1.',
+    ].join('\n'));
+
+    expect(parsed.selectedLines).toEqual(['AssertionError: expected undefined to be defined']);
+    expect(parsed.rawExcerpt).not.toContain('\u001b[2K');
+    expect(parsed.rawExcerpt).not.toContain('Command failed');
   });
 
   it('keeps distinct failure lines even when they normalize to the same shape', () => {
