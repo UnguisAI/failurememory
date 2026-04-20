@@ -1,5 +1,5 @@
 name: 'FailureMemory'
-description: 'Fingerprint recurring GitHub Actions failures and keep a rolling history-backed recurrence brief'
+description: 'GitHub Action for CI failure triage: fingerprint recurring GitHub Actions failures and keep a rolling recurrence history'
 author: 'UnguisAI'
 
 branding:

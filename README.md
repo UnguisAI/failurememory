@@ -1,6 +1,8 @@
 # FailureMemory
 
-FailureMemory is a GitHub Action for recurring CI triage: it fingerprints noisy GitHub Actions failures, keeps a rolling history, and turns the latest failed run into a short recurrence brief.
+FailureMemory is a GitHub Action for CI failure triage: it fingerprints recurring GitHub Actions failures, keeps a rolling history, and turns the latest failed run into a short recurrence brief.
+
+Use it when the same workflow failure keeps coming back and your team is tired of re-reading the same CI logs from scratch.
 
 ## Why it exists
 
@@ -19,6 +21,12 @@ It is intentionally deterministic and local-first for the first release: no host
 - Hashes the normalized excerpt into a stable SHA-256 fingerprint
 - Merges the failure into a rolling JSON history file
 - Writes a markdown recurrence summary and step outputs for downstream workflow steps
+
+## Common use cases
+
+- Repeated GitHub Actions failures that keep forcing fresh manual triage
+- `workflow_run` follow-up workflows that need a short debugging brief for the latest failed run
+- CI log analysis where you want deterministic failure clustering without a hosted service or LLM dependency
 
 ## Real public dogfood
 

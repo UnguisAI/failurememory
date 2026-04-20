@@ -1,7 +1,7 @@
 {
   "name": "failurememory",
   "version": "0.1.0",
-  "description": "GitHub Action that fingerprints recurring CI failures and keeps a rolling history-backed recurrence brief",
+  "description": "GitHub Action for CI failure triage that fingerprints recurring GitHub Actions failures and keeps a rolling recurrence history",
   "author": "UnguisAI",
   "main": "dist/index.js",
   "scripts": {
