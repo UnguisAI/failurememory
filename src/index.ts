@@ -3,9 +3,9 @@ import path from 'node:path';
 import * as core from '@actions/core';
 import { createFingerprint } from './fingerprint';
 import { loadHistory, mergeFailureIntoHistory, saveHistory } from './history';
-import { parseLog } from './log-parser';
+import { buildParsedFailureFromSelectedLines, parseLog } from './log-parser';
 import { buildSummary } from './summary';
-import type { ActionInputs, ActionResult, ActionRuntime, FetchMode } from './types';
+import type { ActionInputs, ActionResult, ActionRuntime, FetchMode, ParsedFailure } from './types';
 
 interface GitHubWorkflowRun {
   id: number;
@@ -31,7 +31,7 @@ interface GitHubJobsResponse {
 
 interface FetchedGitHubJobLog {
   job: GitHubJob;
-  failureSignalText: string;
+  selectedFailureLines: string[];
   sortKey: string;
 }
 
@@ -39,6 +39,7 @@ interface LogSource {
   logText: string;
   logReference: string;
   runId: string;
+  parsedFailure?: ParsedFailure;
 }
 
 const GITHUB_PER_PAGE = 100;
@@ -204,7 +205,7 @@ function buildFetchedGitHubJobLog(job: GitHubJob, logText: string): Omit<Fetched
   try {
     const parsedFailure = parseLog(logText);
     return {
-      failureSignalText: parsedFailure.rawExcerpt,
+      selectedFailureLines: parsedFailure.selectedLines,
       sortKey: [normalizedJobName, parsedFailure.normalizedExcerpt].join('\n'),
     };
   } catch (error) {
@@ -213,7 +214,7 @@ function buildFetchedGitHubJobLog(job: GitHubJob, logText: string): Omit<Fetched
     }
 
     return {
-      failureSignalText: '',
+      selectedFailureLines: [],
       sortKey: [normalizedJobName, logText.trim()].join('\n'),
     };
   }
@@ -345,18 +346,17 @@ async function resolveGitHubLogSource(inputs: ActionInputs, runtime: ActionRunti
   }
 
   const orderedJobLogs = sortFetchedGitHubJobLogs(fetchedJobLogs);
-  const combinedFailureSignals = orderedJobLogs
-    .map(({ failureSignalText }) => failureSignalText)
-    .filter(Boolean);
+  const combinedSelectedFailureLines = orderedJobLogs.flatMap(({ selectedFailureLines }) => selectedFailureLines);
 
-  if (combinedFailureSignals.length === 0) {
+  if (combinedSelectedFailureLines.length === 0) {
     throw new Error('Could not find a recognizable failure excerpt in the provided log.');
   }
 
   return {
-    logText: combinedFailureSignals.join('\n'),
+    logText: combinedSelectedFailureLines.join('\n'),
     logReference: `github://${repository}/actions/runs/${runId}#jobs=${orderedJobLogs.map(({ job }) => job.id).join(',')}`,
     runId,
+    parsedFailure: buildParsedFailureFromSelectedLines(combinedSelectedFailureLines),
   };
 }
 
@@ -399,7 +399,7 @@ export async function runAction(runtime: ActionRuntime = createRuntime()): Promi
     const summaryPath = await resolveWithinWorkspace(workspace, inputs.summaryFile, 'summary_file');
     const logSource = await resolveLogSource(inputs, runtime, workspace);
     const timestamp = runtime.now().toISOString();
-    const parsedFailure = parseLog(logSource.logText);
+    const parsedFailure = logSource.parsedFailure ?? parseLog(logSource.logText);
     const fingerprint = createFingerprint(parsedFailure.normalizedExcerpt);
     const history = await loadHistory(historyPath, inputs.maxRuns);
     const mergedHistory = mergeFailureIntoHistory(

@@ -129,6 +129,46 @@ function buildDeduplicationKey(line: string): string {
   return normalizeVolatileNumericIds(normalizePathLikeContent(stripSignalNoise(line)));
 }
 
+export function buildParsedFailureFromSelectedLines(selectedLines: string[]): ParsedFailure {
+  if (selectedLines.length === 0) {
+    throw new Error('Could not find a recognizable failure excerpt in the provided log.');
+  }
+
+  const cleanedSelectedLines = selectedLines.map(selectedLine => {
+    const excerptLine = stripSignalNoise(selectedLine);
+    return {
+      line: excerptLine,
+      isGenericExitCode: classifyLine(excerptLine).isGenericExitCode,
+    };
+  });
+  const hasSpecificFailureLine = cleanedSelectedLines.some(selectedLine => !selectedLine.isGenericExitCode);
+  const excerptLines = cleanedSelectedLines
+    .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
+    .map(selectedLine => selectedLine.line);
+  const dedupedExcerptLines: string[] = [];
+  const dedupedNormalizedLines: string[] = [];
+  const seenNormalizedSignals = new Set<string>();
+
+  for (const excerptLine of excerptLines) {
+    const deduplicationKey = buildDeduplicationKey(excerptLine);
+    const normalizedLine = normalizeLine(excerptLine);
+
+    if (seenNormalizedSignals.has(deduplicationKey)) {
+      continue;
+    }
+
+    seenNormalizedSignals.add(deduplicationKey);
+    dedupedExcerptLines.push(excerptLine);
+    dedupedNormalizedLines.push(normalizedLine);
+  }
+
+  return {
+    rawExcerpt: dedupedExcerptLines.join('\n'),
+    normalizedExcerpt: dedupedNormalizedLines.join('\n'),
+    selectedLines: dedupedExcerptLines,
+  };
+}
+
 export function parseLog(logText: string): ParsedFailure {
   const lines = logText
     .split(/\r?\n/)
@@ -173,29 +213,6 @@ export function parseLog(logText: string): ParsedFailure {
   const excerptLines = selectedLines
     .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
     .map(selectedLine => selectedLine.line);
-  const dedupedExcerptLines: string[] = [];
-  const dedupedNormalizedLines: string[] = [];
-  const seenNormalizedSignals = new Set<string>();
 
-  for (const excerptLine of excerptLines) {
-    const deduplicationKey = buildDeduplicationKey(excerptLine);
-    const normalizedLine = normalizeLine(excerptLine);
-
-    if (seenNormalizedSignals.has(deduplicationKey)) {
-      continue;
-    }
-
-    seenNormalizedSignals.add(deduplicationKey);
-    dedupedExcerptLines.push(excerptLine);
-    dedupedNormalizedLines.push(normalizedLine);
-  }
-
-  const rawExcerpt = dedupedExcerptLines.join('\n');
-  const normalizedExcerpt = dedupedNormalizedLines.join('\n');
-
-  return {
-    rawExcerpt,
-    normalizedExcerpt,
-    selectedLines: dedupedExcerptLines,
-  };
+  return buildParsedFailureFromSelectedLines(excerptLines);
 }

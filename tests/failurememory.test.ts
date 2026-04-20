@@ -711,6 +711,130 @@ describe('runAction integration', () => {
     }
   });
 
+  it('preserves prefix-only GitHub error lines through fetched-signal aggregation', async () => {
+    const { mkdtemp, readFile: readTempFile, realpath: resolveRealpath, rm } = require('node:fs/promises');
+    const os = require('node:os');
+    const { createFingerprint } = require('../src/fingerprint');
+    const { runAction } = require('../src/index');
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'failurememory-github-prefix-only-'));
+    const historyPath = path.join(tempDir, 'state', 'history.json');
+    const summaryPath = path.join(tempDir, 'output', 'summary.md');
+    const normalizedExcerpt = 'no matching workflow run found with any artifacts?';
+    const fingerprint = createFingerprint(normalizedExcerpt);
+    const syntheticSource = 'github://octo-org/octo-repo/actions/runs/300#jobs=21';
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          jobs: [
+            {
+              id: 21,
+              name: 'upload-previews',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:00:00Z',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        textResponse([
+          '2026-04-19T22:12:09.9177586Z ==> Skipping run from fork: sittingthyme/pydantic',
+          '2026-04-19T22:12:09.9211597Z ##[error]no matching workflow run found with any artifacts?',
+          '2026-04-19T22:12:09.9629595Z Cleaning up orphan processes',
+        ].join('\n'))
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    try {
+      const { outputs, runtime } = createActionRuntime(tempDir, {
+        fetch_mode: 'github',
+        github_repository: 'octo-org/octo-repo',
+        github_token: 'input-token',
+        github_run_id: '300',
+        history_file: 'state/history.json',
+        max_runs: '5',
+        summary_file: 'output/summary.md',
+      });
+
+      const result = await runAction(runtime);
+      const summaryMarkdown = await readTempFile(summaryPath, 'utf8');
+      const resolvedHistoryPath = await resolveRealpath(historyPath);
+      const resolvedSummaryPath = await resolveRealpath(summaryPath);
+
+      expect(result).toEqual({
+        fingerprint,
+        seenCount: 1,
+        historyPath: resolvedHistoryPath,
+        summaryPath: resolvedSummaryPath,
+      });
+      expect(outputs).toEqual({
+        fingerprint,
+        seen_count: '1',
+        history_path: resolvedHistoryPath,
+        summary_path: resolvedSummaryPath,
+      });
+      expect(summaryMarkdown).toContain(normalizedExcerpt);
+      expect(summaryMarkdown).toContain(syntheticSource);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops fetched generic exit-code lines when another job provides a specific failure', async () => {
+    const { mkdtemp, readFile: readTempFile, rm } = require('node:fs/promises');
+    const os = require('node:os');
+    const { createFingerprint } = require('../src/fingerprint');
+    const { runAction } = require('../src/index');
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'failurememory-github-generic-filter-'));
+    const summaryPath = path.join(tempDir, 'output', 'summary.md');
+    const normalizedExcerpt = 'package build failed hard';
+    const fingerprint = createFingerprint(normalizedExcerpt);
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          jobs: [
+            {
+              id: 22,
+              name: 'test',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:05:00Z',
+            },
+            {
+              id: 21,
+              name: 'build',
+              conclusion: 'failure',
+              started_at: '2026-04-19T20:00:00Z',
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(textResponse('2026-04-19T22:12:09.9211597Z Process completed with exit code 1.'))
+      .mockResolvedValueOnce(textResponse('2026-04-19T22:12:09.9211597Z ##[error]package build failed hard'));
+    global.fetch = fetchMock as typeof fetch;
+
+    try {
+      const { outputs, runtime } = createActionRuntime(tempDir, {
+        fetch_mode: 'github',
+        github_repository: 'octo-org/octo-repo',
+        github_token: 'input-token',
+        github_run_id: '300',
+        history_file: 'state/history.json',
+        max_runs: '5',
+        summary_file: 'output/summary.md',
+      });
+
+      const result = await runAction(runtime);
+      const summaryMarkdown = await readTempFile(summaryPath, 'utf8');
+
+      expect(result.fingerprint).toBe(fingerprint);
+      expect(result.seenCount).toBe(1);
+      expect(outputs.fingerprint).toBe(fingerprint);
+      expect(summaryMarkdown).toContain(normalizedExcerpt);
+      expect(summaryMarkdown).not.toContain('Process completed with exit code 1.');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses compact per-job failure signals in GitHub mode instead of reparsing concatenated raw job logs', async () => {
     const { mkdtemp, mkdir, readFile: readTempFile, realpath: resolveRealpath, rm, writeFile } = require('node:fs/promises');
     const os = require('node:os');
@@ -752,9 +876,20 @@ describe('runAction integration', () => {
 
       throw new Error(`Unexpected parseLog input: ${logText.slice(0, 120)}`);
     });
+    const buildParsedFailureFromSelectedLinesMock = jest.fn((selectedLines: string[]) => {
+      expect(selectedLines).toEqual(['error: alpha failure', 'error: beta failure']);
+      return {
+        rawExcerpt: combinedFailureSignal,
+        normalizedExcerpt: combinedFailureSignal,
+        selectedLines: ['error: alpha failure', 'error: beta failure'],
+      };
+    });
 
     jest.resetModules();
-    jest.doMock('../src/log-parser', () => ({ parseLog: parseLogMock }));
+    jest.doMock('../src/log-parser', () => ({
+      parseLog: parseLogMock,
+      buildParsedFailureFromSelectedLines: buildParsedFailureFromSelectedLinesMock,
+    }));
 
     const fetchMock = jest.fn()
       .mockResolvedValueOnce(
@@ -823,7 +958,10 @@ describe('runAction integration', () => {
       expect(parseLogMock.mock.calls.map(([logText]) => logText)).toEqual([
         expect.stringContaining('FILLER_22'),
         expect.stringContaining('FILLER_21'),
-        combinedFailureSignal,
+      ]);
+      expect(buildParsedFailureFromSelectedLinesMock).toHaveBeenCalledWith([
+        'error: alpha failure',
+        'error: beta failure',
       ]);
       expect(savedHistory.failures[fingerprint]).toEqual({
         fingerprint,
@@ -875,9 +1013,15 @@ describe('runAction integration', () => {
 
       throw new Error(`Unexpected parseLog input: ${logText.slice(0, 120)}`);
     });
+    const buildParsedFailureFromSelectedLinesMock = jest.fn(() => {
+      throw new Error('should not combine parsed failures after a parser crash');
+    });
 
     jest.resetModules();
-    jest.doMock('../src/log-parser', () => ({ parseLog: parseLogMock }));
+    jest.doMock('../src/log-parser', () => ({
+      parseLog: parseLogMock,
+      buildParsedFailureFromSelectedLines: buildParsedFailureFromSelectedLinesMock,
+    }));
 
     const fetchMock = jest.fn()
       .mockResolvedValueOnce(
@@ -927,6 +1071,7 @@ describe('runAction integration', () => {
 
       await expect(runAction(runtime)).rejects.toThrow('parser blew up');
       expect(failures).toContainEqual(expect.stringContaining('parser blew up'));
+      expect(buildParsedFailureFromSelectedLinesMock).not.toHaveBeenCalled();
     } finally {
       jest.dontMock('../src/log-parser');
       jest.resetModules();

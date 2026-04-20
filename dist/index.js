@@ -25913,7 +25913,7 @@ function buildFetchedGitHubJobLog(job, logText) {
     try {
         const parsedFailure = (0, log_parser_1.parseLog)(logText);
         return {
-            failureSignalText: parsedFailure.rawExcerpt,
+            selectedFailureLines: parsedFailure.selectedLines,
             sortKey: [normalizedJobName, parsedFailure.normalizedExcerpt].join('\n'),
         };
     }
@@ -25922,7 +25922,7 @@ function buildFetchedGitHubJobLog(job, logText) {
             throw error;
         }
         return {
-            failureSignalText: '',
+            selectedFailureLines: [],
             sortKey: [normalizedJobName, logText.trim()].join('\n'),
         };
     }
@@ -26015,16 +26015,15 @@ async function resolveGitHubLogSource(inputs, runtime) {
         });
     }
     const orderedJobLogs = sortFetchedGitHubJobLogs(fetchedJobLogs);
-    const combinedFailureSignals = orderedJobLogs
-        .map(({ failureSignalText }) => failureSignalText)
-        .filter(Boolean);
-    if (combinedFailureSignals.length === 0) {
+    const combinedSelectedFailureLines = orderedJobLogs.flatMap(({ selectedFailureLines }) => selectedFailureLines);
+    if (combinedSelectedFailureLines.length === 0) {
         throw new Error('Could not find a recognizable failure excerpt in the provided log.');
     }
     return {
-        logText: combinedFailureSignals.join('\n'),
+        logText: combinedSelectedFailureLines.join('\n'),
         logReference: `github://${repository}/actions/runs/${runId}#jobs=${orderedJobLogs.map(({ job }) => job.id).join(',')}`,
         runId,
+        parsedFailure: (0, log_parser_1.buildParsedFailureFromSelectedLines)(combinedSelectedFailureLines),
     };
 }
 async function resolveLogSource(inputs, runtime, workspace) {
@@ -26059,7 +26058,7 @@ async function runAction(runtime = createRuntime()) {
         const summaryPath = await resolveWithinWorkspace(workspace, inputs.summaryFile, 'summary_file');
         const logSource = await resolveLogSource(inputs, runtime, workspace);
         const timestamp = runtime.now().toISOString();
-        const parsedFailure = (0, log_parser_1.parseLog)(logSource.logText);
+        const parsedFailure = logSource.parsedFailure ?? (0, log_parser_1.parseLog)(logSource.logText);
         const fingerprint = (0, fingerprint_1.createFingerprint)(parsedFailure.normalizedExcerpt);
         const history = await (0, history_1.loadHistory)(historyPath, inputs.maxRuns);
         const mergedHistory = (0, history_1.mergeFailureIntoHistory)(history, {
@@ -26108,6 +26107,7 @@ if (require.main === require.cache[eval('__filename')]) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildParsedFailureFromSelectedLines = buildParsedFailureFromSelectedLines;
 exports.parseLog = parseLog;
 const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ACTIONS_LINE_PATTERN = /^[^\t]+\t[^\t]*\t(?:\uFEFF)?(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*)?(.*)$/;
@@ -26212,6 +26212,40 @@ function normalizeLine(line) {
 function buildDeduplicationKey(line) {
     return normalizeVolatileNumericIds(normalizePathLikeContent(stripSignalNoise(line)));
 }
+function buildParsedFailureFromSelectedLines(selectedLines) {
+    if (selectedLines.length === 0) {
+        throw new Error('Could not find a recognizable failure excerpt in the provided log.');
+    }
+    const cleanedSelectedLines = selectedLines.map(selectedLine => {
+        const excerptLine = stripSignalNoise(selectedLine);
+        return {
+            line: excerptLine,
+            isGenericExitCode: classifyLine(excerptLine).isGenericExitCode,
+        };
+    });
+    const hasSpecificFailureLine = cleanedSelectedLines.some(selectedLine => !selectedLine.isGenericExitCode);
+    const excerptLines = cleanedSelectedLines
+        .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
+        .map(selectedLine => selectedLine.line);
+    const dedupedExcerptLines = [];
+    const dedupedNormalizedLines = [];
+    const seenNormalizedSignals = new Set();
+    for (const excerptLine of excerptLines) {
+        const deduplicationKey = buildDeduplicationKey(excerptLine);
+        const normalizedLine = normalizeLine(excerptLine);
+        if (seenNormalizedSignals.has(deduplicationKey)) {
+            continue;
+        }
+        seenNormalizedSignals.add(deduplicationKey);
+        dedupedExcerptLines.push(excerptLine);
+        dedupedNormalizedLines.push(normalizedLine);
+    }
+    return {
+        rawExcerpt: dedupedExcerptLines.join('\n'),
+        normalizedExcerpt: dedupedNormalizedLines.join('\n'),
+        selectedLines: dedupedExcerptLines,
+    };
+}
 function parseLog(logText) {
     const lines = logText
         .split(/\r?\n/)
@@ -26248,26 +26282,7 @@ function parseLog(logText) {
     const excerptLines = selectedLines
         .filter(selectedLine => !hasSpecificFailureLine || !selectedLine.isGenericExitCode)
         .map(selectedLine => selectedLine.line);
-    const dedupedExcerptLines = [];
-    const dedupedNormalizedLines = [];
-    const seenNormalizedSignals = new Set();
-    for (const excerptLine of excerptLines) {
-        const deduplicationKey = buildDeduplicationKey(excerptLine);
-        const normalizedLine = normalizeLine(excerptLine);
-        if (seenNormalizedSignals.has(deduplicationKey)) {
-            continue;
-        }
-        seenNormalizedSignals.add(deduplicationKey);
-        dedupedExcerptLines.push(excerptLine);
-        dedupedNormalizedLines.push(normalizedLine);
-    }
-    const rawExcerpt = dedupedExcerptLines.join('\n');
-    const normalizedExcerpt = dedupedNormalizedLines.join('\n');
-    return {
-        rawExcerpt,
-        normalizedExcerpt,
-        selectedLines: dedupedExcerptLines,
-    };
+    return buildParsedFailureFromSelectedLines(excerptLines);
 }
 
 
